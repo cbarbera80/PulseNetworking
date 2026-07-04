@@ -37,6 +37,9 @@ public class NetworkClientBuilder {
     /// Cache duration in seconds.
     private var cacheDuration: TimeInterval = 300
 
+    /// The JSONDecoder used to decode response bodies.
+    private var decoder: JSONDecoder = JSONDecoder()
+
     /// Initializes a new NetworkClientBuilder with default settings.
     public init() {}
 
@@ -183,6 +186,19 @@ public class NetworkClientBuilder {
         return self
     }
 
+    /// Sets a custom JSONDecoder for decoding response bodies.
+    ///
+    /// Use this to customize date decoding strategies, key decoding strategies,
+    /// or other JSONDecoder behavior.
+    ///
+    /// - Parameter decoder: The JSONDecoder to use
+    /// - Returns: Self for method chaining
+    @discardableResult
+    public func withDecoder(_ decoder: JSONDecoder) -> Self {
+        self.decoder = decoder
+        return self
+    }
+
     /// Builds and returns the configured NetworkClient instance.
     ///
     /// - Returns: A fully configured NetworkClient
@@ -194,7 +210,8 @@ public class NetworkClientBuilder {
             retryPolicy: retryPolicy,
             cache: cache,
             cacheEnabled: cacheEnabled,
-            cacheDuration: cacheDuration
+            cacheDuration: cacheDuration,
+            decoder: decoder
         )
     }
 }

@@ -47,6 +47,15 @@ public func put<T: Decodable>(_ path: String, body: Encodable) async throws -> T
 public func patch<T: Decodable>(_ path: String, body: Encodable) async throws -> T
 public func delete<T: Decodable>(_ path: String) async throws -> T
 public func request<T: Decodable>(_ request: NetworkRequest) async throws -> T
+
+// No-decode variants, for endpoints with no body or a response you don't need
+// (e.g. 204 No Content, ack-only endpoints)
+public func get(_ path: String) async throws
+public func post(_ path: String, body: Encodable) async throws
+public func put(_ path: String, body: Encodable) async throws
+public func patch(_ path: String, body: Encodable) async throws
+public func delete(_ path: String) async throws
+public func send(_ request: NetworkRequest) async throws
 ```
 
 ### NetworkClientBuilder
@@ -63,6 +72,7 @@ NetworkClientBuilder()
     .withSimpleRetry(...) -> Self
     .withCache(enabled: Bool, duration: TimeInterval) -> Self
     .withCustomCache(_ cache: NetworkCacheProtocol) -> Self
+    .withDecoder(_ decoder: JSONDecoder) -> Self
     .build() -> NetworkClient
 ```
 
@@ -107,6 +117,8 @@ Define how to handle errors and retries:
 ```swift
 .withCache(enabled: true, duration: 300) // 5 minutes
 ```
+
+Only GET requests are cached — mutating requests (POST/PUT/PATCH/DELETE) always hit the network, since the cache key doesn't account for the request body.
 
 - **InMemoryNetworkCache**: In-memory cache (thread-safe)
 - **NoNetworkCache**: No cache

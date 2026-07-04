@@ -58,6 +58,9 @@ public class NetworkClient: @unchecked Sendable {
     /// How long cached responses remain valid in seconds.
     private let cacheDuration: TimeInterval
 
+    /// The JSONDecoder used to decode response bodies.
+    private let decoder: JSONDecoder
+
     /// Initializes a NetworkClient with the specified configuration.
     ///
     /// - Parameters:
@@ -68,6 +71,7 @@ public class NetworkClient: @unchecked Sendable {
     ///   - cache: Cache implementation
     ///   - cacheEnabled: Whether to use the cache
     ///   - cacheDuration: Cache expiration time in seconds
+    ///   - decoder: JSONDecoder used to decode response bodies
     init(
         baseURL: URL?,
         session: URLSessionProtocol = URLSession.shared,
@@ -75,7 +79,8 @@ public class NetworkClient: @unchecked Sendable {
         retryPolicy: RetryPolicy = NoRetryPolicy(),
         cache: NetworkCacheProtocol = NoNetworkCache(),
         cacheEnabled: Bool = false,
-        cacheDuration: TimeInterval = 300
+        cacheDuration: TimeInterval = 300,
+        decoder: JSONDecoder = JSONDecoder()
     ) {
         self.baseURL = baseURL
         self.session = session
@@ -84,6 +89,7 @@ public class NetworkClient: @unchecked Sendable {
         self.cache = cache
         self.cacheEnabled = cacheEnabled
         self.cacheDuration = cacheDuration
+        self.decoder = decoder
     }
 
     /// Performs a GET request and decodes the response.
@@ -102,6 +108,21 @@ public class NetworkClient: @unchecked Sendable {
         return try await execute(request)
     }
 
+    /// Performs a GET request without decoding the response body.
+    ///
+    /// - Parameters:
+    ///   - path: The request path (appended to baseURL if set)
+    ///   - headers: Optional custom headers
+    /// - Throws: NetworkError
+    public func get(
+        _ path: String,
+        headers: [String: String] = [:]
+    ) async throws {
+        let url = buildURL(path)
+        let request = NetworkRequest(url: url, method: .get, headers: headers)
+        try await send(request)
+    }
+
     /// Performs a POST request with an encoded body and decodes the response.
     ///
     /// - Parameters:
@@ -115,13 +136,24 @@ public class NetworkClient: @unchecked Sendable {
         body: Encodable,
         headers: [String: String] = [:]
     ) async throws -> T {
-        let url = buildURL(path)
-        let bodyData = try JSONEncoder().encode(body)
-        var request = NetworkRequest(url: url, method: .post, headers: headers, body: bodyData)
-        if request.headers["Content-Type"] == nil {
-            request.headers["Content-Type"] = "application/json"
-        }
+        let request = try buildBodyRequest(path, method: .post, body: body, headers: headers)
         return try await execute(request)
+    }
+
+    /// Performs a POST request with an encoded body, without decoding the response.
+    ///
+    /// - Parameters:
+    ///   - path: The request path (appended to baseURL if set)
+    ///   - body: The request body to encode as JSON
+    ///   - headers: Optional custom headers
+    /// - Throws: NetworkError or EncodingError
+    public func post(
+        _ path: String,
+        body: Encodable,
+        headers: [String: String] = [:]
+    ) async throws {
+        let request = try buildBodyRequest(path, method: .post, body: body, headers: headers)
+        try await send(request)
     }
 
     /// Performs a PUT request with an encoded body and decodes the response.
@@ -137,13 +169,24 @@ public class NetworkClient: @unchecked Sendable {
         body: Encodable,
         headers: [String: String] = [:]
     ) async throws -> T {
-        let url = buildURL(path)
-        let bodyData = try JSONEncoder().encode(body)
-        var request = NetworkRequest(url: url, method: .put, headers: headers, body: bodyData)
-        if request.headers["Content-Type"] == nil {
-            request.headers["Content-Type"] = "application/json"
-        }
+        let request = try buildBodyRequest(path, method: .put, body: body, headers: headers)
         return try await execute(request)
+    }
+
+    /// Performs a PUT request with an encoded body, without decoding the response.
+    ///
+    /// - Parameters:
+    ///   - path: The request path (appended to baseURL if set)
+    ///   - body: The request body to encode as JSON
+    ///   - headers: Optional custom headers
+    /// - Throws: NetworkError or EncodingError
+    public func put(
+        _ path: String,
+        body: Encodable,
+        headers: [String: String] = [:]
+    ) async throws {
+        let request = try buildBodyRequest(path, method: .put, body: body, headers: headers)
+        try await send(request)
     }
 
     /// Performs a PATCH request with an encoded body and decodes the response.
@@ -159,13 +202,24 @@ public class NetworkClient: @unchecked Sendable {
         body: Encodable,
         headers: [String: String] = [:]
     ) async throws -> T {
-        let url = buildURL(path)
-        let bodyData = try JSONEncoder().encode(body)
-        var request = NetworkRequest(url: url, method: .patch, headers: headers, body: bodyData)
-        if request.headers["Content-Type"] == nil {
-            request.headers["Content-Type"] = "application/json"
-        }
+        let request = try buildBodyRequest(path, method: .patch, body: body, headers: headers)
         return try await execute(request)
+    }
+
+    /// Performs a PATCH request with an encoded body, without decoding the response.
+    ///
+    /// - Parameters:
+    ///   - path: The request path (appended to baseURL if set)
+    ///   - body: The request body to encode as JSON
+    ///   - headers: Optional custom headers
+    /// - Throws: NetworkError or EncodingError
+    public func patch(
+        _ path: String,
+        body: Encodable,
+        headers: [String: String] = [:]
+    ) async throws {
+        let request = try buildBodyRequest(path, method: .patch, body: body, headers: headers)
+        try await send(request)
     }
 
     /// Performs a DELETE request and decodes the response.
@@ -184,6 +238,21 @@ public class NetworkClient: @unchecked Sendable {
         return try await execute(request)
     }
 
+    /// Performs a DELETE request without decoding the response.
+    ///
+    /// - Parameters:
+    ///   - path: The request path (appended to baseURL if set)
+    ///   - headers: Optional custom headers
+    /// - Throws: NetworkError
+    public func delete(
+        _ path: String,
+        headers: [String: String] = [:]
+    ) async throws {
+        let url = buildURL(path)
+        let request = NetworkRequest(url: url, method: .delete, headers: headers)
+        try await send(request)
+    }
+
     /// Performs a custom network request and decodes the response.
     ///
     /// - Parameter request: The configured NetworkRequest to execute
@@ -195,87 +264,103 @@ public class NetworkClient: @unchecked Sendable {
         try await execute(request)
     }
 
-    /// Executes a request with caching and retry logic.
+    /// Performs a custom network request, discarding the response body.
     ///
-    /// Checks the cache first if enabled, then executes with retry policy.
+    /// Use this for endpoints that return no body or a body you don't need decoded
+    /// (e.g. 204 No Content, or acknowledgement-only endpoints).
+    ///
+    /// - Parameter request: The configured NetworkRequest to execute
+    /// - Throws: NetworkError
+    public func send(_ request: NetworkRequest) async throws {
+        _ = try await performRequest(request, attempt: 1)
+    }
+
+    /// Builds a NetworkRequest with a JSON-encoded body and a default Content-Type header.
+    ///
+    /// - Throws: EncodingError if the body cannot be encoded
+    private func buildBodyRequest(
+        _ path: String,
+        method: HTTPMethod,
+        body: Encodable,
+        headers: [String: String]
+    ) throws -> NetworkRequest {
+        let url = buildURL(path)
+        let bodyData = try JSONEncoder().encode(body)
+        var request = NetworkRequest(url: url, method: method, headers: headers, body: bodyData)
+        if request.headers["Content-Type"] == nil {
+            request.headers["Content-Type"] = "application/json"
+        }
+        return request
+    }
+
+    /// Executes a request with caching and retry logic, then decodes the response.
+    ///
+    /// Checks the cache first if enabled (GET requests only), then executes with retry policy.
     ///
     /// - Parameter request: The network request to execute
     /// - Returns: The decoded response
     /// - Throws: NetworkError or DecodingError
     private func execute<T: Decodable>(_ request: NetworkRequest) async throws -> T {
         let cacheKey = request.cacheKey()
+        let cacheable = cacheEnabled && request.method == .get
 
-        // Try to get from cache if enabled
-        if cacheEnabled, let cachedData = await cache.get(for: cacheKey) {
+        if cacheable, let cachedData = await cache.get(for: cacheKey) {
             do {
-                let response = try JSONDecoder().decode(T.self, from: cachedData)
-                return response
+                return try decoder.decode(T.self, from: cachedData)
             } catch {
                 // If cached data is corrupted, remove it and continue
                 await cache.remove(for: cacheKey)
             }
         }
 
-        return try await executeWithRetry(request, attempt: 1, cacheKey: cacheKey)
+        let data = try await performRequest(request, attempt: 1)
+
+        let decoded = try decoder.decode(T.self, from: data)
+
+        if cacheable {
+            await cache.set(data, for: cacheKey, expiresIn: cacheDuration)
+        }
+
+        return decoded
     }
 
-    /// Executes a request with automatic retry logic.
+    /// Executes a request with automatic retry logic and returns the raw response data.
     ///
-    /// Applies all interceptors, executes the request, and retries if necessary
-    /// based on the retry policy.
+    /// Applies all interceptors (re-applied on every retry attempt, so interceptors that
+    /// read fresh state such as a refreshed auth token work correctly), executes the
+    /// request, validates the HTTP status, and retries if necessary based on the retry policy.
     ///
     /// - Parameters:
     ///   - request: The network request to execute
     ///   - attempt: The current attempt number
-    ///   - cacheKey: The cache key for the response
-    /// - Returns: The decoded response
-    /// - Throws: NetworkError or DecodingError
-    private func executeWithRetry<T: Decodable>(
-        _ request: NetworkRequest,
-        attempt: Int,
-        cacheKey: String
-    ) async throws -> T {
+    /// - Returns: The raw response data
+    /// - Throws: NetworkError
+    private func performRequest(_ request: NetworkRequest, attempt: Int) async throws -> Data {
         do {
             var urlRequest = request.toURLRequest()
 
-            // Apply all interceptors in order
             for interceptor in interceptors {
                 urlRequest = try await interceptor.intercept(urlRequest)
             }
 
-            // Perform the request
             let (data, response) = try await session.data(for: urlRequest)
 
-            // Validate the response
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NetworkError.invalidResponse
             }
 
-            // Check HTTP status code
             guard (200..<300).contains(httpResponse.statusCode) else {
                 throw NetworkError.httpError(statusCode: httpResponse.statusCode, data: data)
             }
 
-            // Decode the response
-            let decodedResponse = try JSONDecoder().decode(T.self, from: data)
-
-            // Cache the raw response data if caching is enabled
-            if cacheEnabled {
-                await cache.set(data, for: cacheKey, expiresIn: cacheDuration)
-            }
-
-            return decodedResponse
+            return data
         } catch {
-            // Check if we should retry
             if retryPolicy.shouldRetry(error, attempt: attempt) {
                 let delay = retryPolicy.delayBeforeRetry(attempt: attempt)
-                // Sleep for the calculated delay
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                // Retry recursively
-                return try await executeWithRetry(request, attempt: attempt + 1, cacheKey: cacheKey)
+                return try await performRequest(request, attempt: attempt + 1)
             }
 
-            // No more retries, throw the error
             throw error
         }
     }

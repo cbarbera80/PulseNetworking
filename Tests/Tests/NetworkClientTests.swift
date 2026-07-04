@@ -287,4 +287,94 @@ final class NetworkClientTests: XCTestCase {
             "application/json"
         )
     }
+
+    func testVoidGetRequest() async throws {
+        let mockSession = MockURLSession()
+        mockSession.data = Data()
+        mockSession.response = mockHTTPResponse(statusCode: 204)
+
+        let client = NetworkClient(baseURL: baseURL, session: mockSession)
+        try await client.get("/users/1/email_verify/abc")
+
+        XCTAssertEqual(mockSession.lastRequest?.httpMethod, "GET")
+        XCTAssertEqual(mockSession.callCount, 1)
+    }
+
+    func testVoidPostRequest() async throws {
+        let mockSession = MockURLSession()
+        mockSession.data = Data()
+        mockSession.response = mockHTTPResponse(statusCode: 200)
+
+        let client = NetworkClient(baseURL: baseURL, session: mockSession)
+        let request = MockCreateUserRequest(name: "Jane", email: "jane@example.com")
+        try await client.post("/users", body: request)
+
+        XCTAssertEqual(mockSession.lastRequest?.httpMethod, "POST")
+        XCTAssertEqual(
+            mockSession.lastRequest?.value(forHTTPHeaderField: "Content-Type"),
+            "application/json"
+        )
+    }
+
+    func testVoidRequestSurfacesHTTPError() async throws {
+        let mockSession = MockURLSession()
+        mockSession.data = "".data(using: .utf8)
+        mockSession.response = mockHTTPResponse(statusCode: 404)
+
+        let client = NetworkClient(baseURL: baseURL, session: mockSession)
+
+        do {
+            try await client.get("/users/999")
+            XCTFail("Should have thrown")
+        } catch NetworkError.httpError(let statusCode, _) {
+            XCTAssertEqual(statusCode, 404)
+        }
+    }
+
+    func testCustomDecoder() async throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        struct SnakeCaseUser: Decodable {
+            let userId: Int
+            let userName: String
+        }
+
+        let mockSession = MockURLSession()
+        mockSession.data = "{\"user_id\": 1, \"user_name\": \"John\"}".data(using: .utf8)
+        mockSession.response = mockHTTPResponse(statusCode: 200)
+
+        let client = NetworkClient(baseURL: baseURL, session: mockSession, decoder: decoder)
+        let result: SnakeCaseUser = try await client.get("/users/1")
+
+        XCTAssertEqual(result.userId, 1)
+        XCTAssertEqual(result.userName, "John")
+    }
+
+    func testCacheIgnoresNonGETRequests() async throws {
+        let mockSession = MockURLSession()
+        mockSession.response = mockHTTPResponse(statusCode: 200)
+
+        let userA = MockUser(id: 1, name: "Alice", email: "alice@example.com")
+        let userB = MockUser(id: 2, name: "Bob", email: "bob@example.com")
+
+        mockSession.dataHandler = { _ in
+            (try JSONEncoder().encode(mockSession.callCount == 1 ? userA : userB), mockHTTPResponse(statusCode: 200))
+        }
+
+        let client = NetworkClient(
+            baseURL: baseURL,
+            session: mockSession,
+            cache: InMemoryNetworkCache(),
+            cacheEnabled: true,
+            cacheDuration: 100
+        )
+
+        let resultA: MockUser = try await client.post("/users", body: MockCreateUserRequest(name: "Alice", email: "alice@example.com"))
+        let resultB: MockUser = try await client.post("/users", body: MockCreateUserRequest(name: "Bob", email: "bob@example.com"))
+
+        XCTAssertEqual(mockSession.callCount, 2)
+        XCTAssertEqual(resultA.name, "Alice")
+        XCTAssertEqual(resultB.name, "Bob")
+    }
 }
