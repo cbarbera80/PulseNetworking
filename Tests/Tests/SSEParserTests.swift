@@ -115,4 +115,56 @@ final class SSEParserTests: XCTestCase {
         XCTAssertEqual(events.count, 1)
         XCTAssertEqual(events[0].data, "")
     }
+
+    func testMissingBlankLineBetweenJSONEventsStillSplitsCorrectly() async throws {
+        let lines = linesStream([
+            "data: {\"type\":\"tool_use\",\"tool\":\"get_relevant_books\"}",
+            "data: {\"message\":{\"id\":\"\",\"content\":\"Ott\"}}",
+            "data: {\"message\":{\"id\":\"\",\"content\":\"Ottima\"}}",
+            ""
+        ])
+        let events = try await collect(SSEParser.parse(lines))
+
+        XCTAssertEqual(events.count, 3)
+        XCTAssertEqual(events[0].data, "{\"type\":\"tool_use\",\"tool\":\"get_relevant_books\"}")
+        XCTAssertEqual(events[1].data, "{\"message\":{\"id\":\"\",\"content\":\"Ott\"}}")
+        XCTAssertEqual(events[2].data, "{\"message\":{\"id\":\"\",\"content\":\"Ottima\"}}")
+    }
+
+    func testMissingBlankLineBetweenJSONArrayEventsStillSplitsCorrectly() async throws {
+        let lines = linesStream([
+            "data: [1,2,3]",
+            "data: [4,5,6]",
+            ""
+        ])
+        let events = try await collect(SSEParser.parse(lines))
+
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(events[0].data, "[1,2,3]")
+        XCTAssertEqual(events[1].data, "[4,5,6]")
+    }
+
+    func testGenuineMultiLineJSONContinuationStillJoins() async throws {
+        let lines = linesStream([
+            "data: {\"a\":1,",
+            "data: \"b\":2}",
+            ""
+        ])
+        let events = try await collect(SSEParser.parse(lines))
+
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0].data, "{\"a\":1,\n\"b\":2}")
+    }
+
+    func testNonJSONMultiLineDataStillJoinsRegardlessOfPrefix() async throws {
+        let lines = linesStream([
+            "data: plain text line one",
+            "data: {not really json but looks like it}",
+            ""
+        ])
+        let events = try await collect(SSEParser.parse(lines))
+
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0].data, "plain text line one\n{not really json but looks like it}")
+    }
 }

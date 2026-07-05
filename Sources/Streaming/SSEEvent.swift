@@ -14,10 +14,19 @@ struct SSEEvent: Sendable {
 /// Parses a raw line stream (as produced by `URLSessionStreamingProtocol.lines(for:)`)
 /// into a stream of SSE events, following the Server-Sent Events line-processing algorithm.
 ///
-/// Deviates from the strict spec in one way: if the line stream ends (EOF) without a
-/// final blank line but with a pending `data` buffer, that event is still flushed before
-/// closing. Real SSE servers often close the connection right after the last event
-/// without sending the terminating blank line.
+/// Deviates from the strict spec in two ways, both aimed at real-world servers whose
+/// framing is slightly off:
+/// - If the line stream ends (EOF) without a final blank line but with a pending `data`
+///   buffer, that event is still flushed before closing. Real SSE servers often close the
+///   connection right after the last event without sending the terminating blank line.
+/// - If a new `data:` line arrives while the pending buffer already holds a complete,
+///   valid JSON value, and the new line itself starts a new JSON object/array (`{`/`[`),
+///   the pending event is flushed before the new line is buffered. Some servers drop the
+///   blank line between consecutive events entirely (not just at EOF), which would
+///   otherwise silently merge two JSON payloads into one invalid blob. This only fires
+///   when the accumulated buffer already parses as standalone JSON, so genuine multi-line
+///   `data:` continuations (where the buffer isn't valid JSON until later lines arrive)
+///   are unaffected.
 enum SSEParser {
     static func parse(_ lines: AsyncThrowingStream<String, Error>) -> AsyncThrowingStream<SSEEvent, Error> {
         AsyncThrowingStream { continuation in
@@ -54,6 +63,11 @@ enum SSEParser {
                         case "event":
                             pendingEvent = value
                         case "data":
+                            if !pendingDataLines.isEmpty,
+                               SSEParser.looksLikeNewJSONValue(value),
+                               SSEParser.isCompleteJSON(pendingDataLines.joined(separator: "\n")) {
+                                flushIfNeeded()
+                            }
                             pendingDataLines.append(value)
                         case "id":
                             pendingId = value
@@ -83,5 +97,14 @@ enum SSEParser {
             value.removeFirst()
         }
         return (field, value)
+    }
+
+    private static func looksLikeNewJSONValue(_ value: String) -> Bool {
+        value.hasPrefix("{") || value.hasPrefix("[")
+    }
+
+    private static func isCompleteJSON(_ value: String) -> Bool {
+        guard let data = value.data(using: .utf8) else { return false }
+        return (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) != nil
     }
 }
