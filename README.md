@@ -55,6 +55,7 @@ public func stream<T: Decodable & Sendable>(_ path: String, headers: [String: St
 // (e.g. 204 No Content, ack-only endpoints)
 public func get(_ path: String) async throws
 public func post(_ path: String, body: Encodable) async throws
+public func post(_ path: String) async throws // no body, e.g. trigger-style endpoints
 public func put(_ path: String, body: Encodable) async throws
 public func patch(_ path: String, body: Encodable) async throws
 public func delete(_ path: String) async throws
