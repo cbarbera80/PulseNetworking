@@ -182,6 +182,29 @@ let client = NetworkClientBuilder()
     .build()
 ```
 
+## 11. Streaming (Server-Sent Events)
+
+```swift
+struct ChatEvent: Decodable {
+    let type: String
+    let message: String?
+}
+
+let client = NetworkClientBuilder()
+    .withBaseURL("https://api.example.com")
+    .withInterceptor(authInterceptor)
+    .build()
+
+let stream: AsyncThrowingStream<ChatEvent, Error> = try await client.stream(
+    "/v1/streaming/conversations/123",
+    queryItems: [URLQueryItem(name: "q", value: "hello")]
+)
+
+for try await event in stream {
+    print(event.message ?? "")
+}
+```
+
 ## Sample Models
 
 ```swift

@@ -15,6 +15,43 @@ public protocol URLSessionProtocol: Sendable {
 
 extension URLSession: URLSessionProtocol {}
 
+/// Protocol for URLSession abstraction over byte-streaming (SSE) requests.
+///
+/// Mirrors `URLSessionProtocol` but for long-lived streaming responses. Kept
+/// as a separate protocol (not a new requirement on `URLSessionProtocol`) so
+/// existing conformances/mocks that only need `data(for:)` are unaffected.
+public protocol URLSessionStreamingProtocol: Sendable {
+    /// Opens a streaming connection and returns the response plus an async
+    /// sequence of raw lines.
+    ///
+    /// - Parameter request: The URLRequest to execute
+    /// - Returns: A tuple of (line sequence, URLResponse)
+    /// - Throws: Any error that occurs while establishing the connection
+    func lines(for request: URLRequest) async throws -> (AsyncThrowingStream<String, Error>, URLResponse)
+}
+
+extension URLSession: URLSessionStreamingProtocol {
+    public func lines(for request: URLRequest) async throws -> (AsyncThrowingStream<String, Error>, URLResponse) {
+        let (asyncBytes, response) = try await self.bytes(for: request)
+        let stream = AsyncThrowingStream<String, Error> { continuation in
+            let task = Task {
+                do {
+                    for try await line in asyncBytes.lines {
+                        continuation.yield(line)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+        return (stream, response)
+    }
+}
+
 /// The main HTTP client for making network requests with async/await support.
 ///
 /// `NetworkClient` provides a high-level interface for making HTTP requests with features like:
@@ -43,6 +80,9 @@ public class NetworkClient: @unchecked Sendable {
     /// The URLSession used for network requests.
     private let session: URLSessionProtocol
 
+    /// The URLSession used for streaming (SSE) requests.
+    private let streamingSession: URLSessionStreamingProtocol
+
     /// Array of interceptors to apply to requests in order.
     private let interceptors: [NetworkInterceptor]
 
@@ -66,6 +106,7 @@ public class NetworkClient: @unchecked Sendable {
     /// - Parameters:
     ///   - baseURL: Optional base URL for all requests
     ///   - session: URLSession or compatible object (defaults to URLSession.shared)
+    ///   - streamingSession: URLSession or compatible object used for streaming requests (defaults to URLSession.shared)
     ///   - interceptors: Array of request interceptors
     ///   - retryPolicy: Policy for retrying failed requests
     ///   - cache: Cache implementation
@@ -75,6 +116,7 @@ public class NetworkClient: @unchecked Sendable {
     init(
         baseURL: URL?,
         session: URLSessionProtocol = URLSession.shared,
+        streamingSession: URLSessionStreamingProtocol = URLSession.shared,
         interceptors: [NetworkInterceptor] = [],
         retryPolicy: RetryPolicy = NoRetryPolicy(),
         cache: NetworkCacheProtocol = NoNetworkCache(),
@@ -84,6 +126,7 @@ public class NetworkClient: @unchecked Sendable {
     ) {
         self.baseURL = baseURL
         self.session = session
+        self.streamingSession = streamingSession
         self.interceptors = interceptors
         self.retryPolicy = retryPolicy
         self.cache = cache
@@ -293,6 +336,84 @@ public class NetworkClient: @unchecked Sendable {
     /// - Throws: NetworkError
     public func send(_ request: NetworkRequest) async throws {
         _ = try await performRequest(request, attempt: 1)
+    }
+
+    /// Opens a Server-Sent Events (SSE) stream and decodes each event's `data` field as JSON.
+    ///
+    /// Applies interceptors once to the initial request (no re-application on
+    /// subsequent events, since there is no retry during streaming). Validates
+    /// the initial HTTP status the same way as `performRequest` (200..<300).
+    /// Bypasses the cache entirely. There is no automatic retry if the
+    /// connection drops mid-stream; the error is thrown to the consumer.
+    ///
+    /// - Parameters:
+    ///   - path: The request path (appended to baseURL if set)
+    ///   - headers: Optional custom headers
+    ///   - queryItems: Optional query items appended to the URL
+    /// - Returns: An AsyncThrowingStream yielding decoded events as they arrive
+    /// - Throws: NetworkError if the initial connection/status validation fails
+    public func stream<T: Decodable & Sendable>(
+        _ path: String,
+        headers: [String: String] = [:],
+        queryItems: [URLQueryItem] = []
+    ) async throws -> AsyncThrowingStream<T, Error> {
+        var url = buildURL(path)
+        if !queryItems.isEmpty, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.queryItems = queryItems
+            if let composedURL = components.url {
+                url = composedURL
+            }
+        }
+        var request = NetworkRequest(url: url, method: .get, headers: headers)
+        if request.headers["Accept"] == nil {
+            request.headers["Accept"] = "text/event-stream"
+        }
+        return try await performStream(request)
+    }
+
+    /// Opens a streaming connection: applies interceptors once, validates the
+    /// initial HTTP status, then returns a decoded event stream. No retry, no cache.
+    ///
+    /// - Parameter request: The network request to execute
+    /// - Returns: An AsyncThrowingStream yielding decoded events as they arrive
+    /// - Throws: NetworkError if the initial connection/status validation fails
+    private func performStream<T: Decodable & Sendable>(_ request: NetworkRequest) async throws -> AsyncThrowingStream<T, Error> {
+        var urlRequest = request.toURLRequest()
+
+        for interceptor in interceptors {
+            urlRequest = try await interceptor.intercept(urlRequest)
+        }
+
+        let (lineStream, response) = try await streamingSession.lines(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw NetworkError.httpError(statusCode: httpResponse.statusCode, data: nil)
+        }
+
+        let sseEvents = SSEParser.parse(lineStream)
+        let decoder = self.decoder
+
+        return AsyncThrowingStream<T, Error> { continuation in
+            let task = Task {
+                do {
+                    for try await event in sseEvents {
+                        guard let data = event.data?.data(using: .utf8) else { continue }
+                        let decoded = try decoder.decode(T.self, from: data)
+                        continuation.yield(decoded)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
     }
 
     /// Builds a NetworkRequest with a JSON-encoded body and a default Content-Type header.

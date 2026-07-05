@@ -22,6 +22,9 @@ public class NetworkClientBuilder {
     /// The URLSession to use for network requests.
     private var session: URLSessionProtocol = URLSession.shared
 
+    /// The URLSession to use for streaming (SSE) requests.
+    private var streamingSession: URLSessionStreamingProtocol = URLSession.shared
+
     /// Array of request interceptors.
     private var interceptors: [NetworkInterceptor] = []
 
@@ -74,6 +77,16 @@ public class NetworkClientBuilder {
     @discardableResult
     public func withSession(_ session: URLSessionProtocol) -> Self {
         self.session = session
+        return self
+    }
+
+    /// Sets a custom URLSession for streaming (SSE) requests.
+    ///
+    /// - Parameter session: The URLSession or compatible object to use for streaming
+    /// - Returns: Self for method chaining
+    @discardableResult
+    public func withStreamingSession(_ session: URLSessionStreamingProtocol) -> Self {
+        self.streamingSession = session
         return self
     }
 
@@ -206,6 +219,7 @@ public class NetworkClientBuilder {
         NetworkClient(
             baseURL: baseURL,
             session: session,
+            streamingSession: streamingSession,
             interceptors: interceptors,
             retryPolicy: retryPolicy,
             cache: cache,
