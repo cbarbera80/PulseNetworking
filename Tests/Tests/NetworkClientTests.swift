@@ -300,6 +300,19 @@ final class NetworkClientTests: XCTestCase {
         XCTAssertEqual(mockSession.callCount, 1)
     }
 
+    func testPostRequestWithoutBody() async throws {
+        let mockSession = MockURLSession()
+        mockSession.data = try JSONEncoder().encode(mockUser)
+        mockSession.response = mockHTTPResponse(statusCode: 201)
+
+        let client = NetworkClient(baseURL: baseURL, session: mockSession)
+        let result: MockUser = try await client.post("/conversations")
+
+        XCTAssertEqual(result.id, mockUser.id)
+        XCTAssertEqual(mockSession.lastRequest?.httpMethod, "POST")
+        XCTAssertNil(mockSession.lastRequest?.httpBody)
+    }
+
     func testVoidPostRequest() async throws {
         let mockSession = MockURLSession()
         mockSession.data = Data()

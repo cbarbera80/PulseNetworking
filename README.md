@@ -43,6 +43,7 @@ let user: User = try await client.get("/users/1")
 ```swift
 public func get<T: Decodable>(_ path: String) async throws -> T
 public func post<T: Decodable>(_ path: String, body: Encodable) async throws -> T
+public func post<T: Decodable>(_ path: String) async throws -> T // no body, e.g. trigger-style endpoints
 public func put<T: Decodable>(_ path: String, body: Encodable) async throws -> T
 public func patch<T: Decodable>(_ path: String, body: Encodable) async throws -> T
 public func delete<T: Decodable>(_ path: String) async throws -> T

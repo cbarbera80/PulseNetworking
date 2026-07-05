@@ -140,6 +140,26 @@ public class NetworkClient: @unchecked Sendable {
         return try await execute(request)
     }
 
+    /// Performs a POST request with no body and decodes the response.
+    ///
+    /// Use this for trigger-style endpoints that don't need a request body
+    /// but do return a body to decode (e.g. "create resource" endpoints
+    /// identified solely by auth/headers).
+    ///
+    /// - Parameters:
+    ///   - path: The request path (appended to baseURL if set)
+    ///   - headers: Optional custom headers
+    /// - Returns: The decoded response object
+    /// - Throws: NetworkError or DecodingError
+    public func post<T: Decodable>(
+        _ path: String,
+        headers: [String: String] = [:]
+    ) async throws -> T {
+        let url = buildURL(path)
+        let request = NetworkRequest(url: url, method: .post, headers: headers)
+        return try await execute(request)
+    }
+
     /// Performs a POST request with an encoded body, without decoding the response.
     ///
     /// - Parameters:
